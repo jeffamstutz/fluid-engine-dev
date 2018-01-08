@@ -15,6 +15,9 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # Declare project
 project(jet)
 
+# Compile options
+include(cmake/CompileOptions.cmake)
+
 # Set output directories
 set(DEFAULT_CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
@@ -56,6 +59,28 @@ if (USE_GL)
     add_definitions(-DJET_USE_GL)
 
     set(IMGUI_LIBRARIES imgui)
+
+    include_directories(external/imgui)
+    include_directories(${OPENGL_INCLUDE_DIRS})
+else()
+    set(OPENGL_LIBRARIES "")
+endif()
+
+option(USE_CUDA "Use CUDA features" ON)
+if (USE_CUDA)
+    find_package(CUDA)
+    list(APPEND CUDA_NVCC_FLAGS -Wno-deprecated-gpu-targets)
+    add_definitions(-DJET_USE_CUDA)
+    include_directories(${CUDA_INCLUDE_DIRS})
+    include_directories($ENV{NVCUDASAMPLES_ROOT}/common/inc)
+
+    if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+        set(DEFAULT_COMPILE_OPTIONS ${DEFAULT_COMPILE_OPTIONS}
+            /wd4515 # -> disable warning: [Thrust issue] 'detail': namespace uses itself
+            /wd4996 # -> disable warning: [Thrust issue] 'strerror': This function or variable may be unsafe.
+            /wd4800 # -> disable warning: [Thrust issue] forcing value to bool 'true' or 'false' (performance warning)
+        )
+    endif()
 endif()
 
 # Includes
@@ -67,36 +92,10 @@ include_directories(external/googletest/googletest/include)
 if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     include_directories(src/winix)
 endif()
-if (USE_GL)
-    include_directories(external/imgui)
-    include_directories(${OPENGL_INCLUDE_DIRS})
-else()
-    set(OPENGL_LIBRARIES "")
-endif()
-
-# Compile options
-include(cmake/CompileOptions.cmake)
 
 # Build type - Release by default
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
-endif()
-
-# Options
-option(USE_CUDA "Use CUDA features" ON)
-if (USE_CUDA)
-    find_package(CUDA)
-    list(APPEND CUDA_NVCC_FLAGS -Wno-deprecated-gpu-targets)
-    add_definitions(-DJET_USE_CUDA)
-    include_directories($ENV{NVCUDASAMPLES_ROOT}/common/inc)
-
-    if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-        list(APPEND DEFAULT_COMPILE_OPTIONS
-            /wd4515 # -> disable warning: [Thrust issue] 'detail': namespace uses itself
-            /wd4996 # -> disable warning: [Thrust issue] 'strerror': This function or variable may be unsafe.
-            /wd4800 # -> disable warning: [Thrust issue] forcing value to bool 'true' or 'false' (performance warning)
-        )
-    endif()
 endif()
 
 # Overrides
@@ -162,6 +161,9 @@ add_subdirectory(src/examples/playground)
 if (USE_GL)
     add_subdirectory(src/examples/smoke_sim2d)
     add_subdirectory(src/examples/stam_sf)
+    if (USE_CUDA)
+        add_subdirectory(src/examples/cuda_particle_sim)
+    endif()
 endif()
 add_subdirectory(external/pybind11)
 if (BUILD_FROM_PIP)
