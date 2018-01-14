@@ -13,12 +13,15 @@
 
 class CudaParticleSystemSolver3Example final : public ParticleSimExample {
  public:
-    CudaParticleSystemSolver3Example() = default;
-
-    void setup(jet::viz::GlfwWindow* window) override;
+    CudaParticleSystemSolver3Example(const jet::Frame& frame);
 
  private:
     jet::experimental::CudaParticleSystemSolver3Ptr _solver;
+    jet::viz::PointsRenderable3Ptr _renderable;
+
+    void onSetup(jet::viz::GlfwWindow* window) override;
+
+    void onUpdate(const jet::Frame& frame) override;
 };
 
 #endif  // SRC_EXAMPLES_CUDA_PARTICLE_SYSTEM_SOLVER3_EXAMPLE_H_

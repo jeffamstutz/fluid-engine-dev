@@ -119,15 +119,13 @@ void CudaPointHashGridSearcher3::build(const CudaArrayView1<float4>& points) {
     // Initialize indices array and generate hash key for each point
     auto countingBegin = thrust::counting_iterator<size_t>(0);
     auto countingEnd = countingBegin + numberOfPoints;
-    InitializeIndexPointAndKeys initIndexPointAndKeysFunc(_gridSpacing,
-                                                          _resolution);
     thrust::for_each(thrust::make_zip_iterator(thrust::make_tuple(
                          countingBegin, _sortedIndices.begin(), points.begin(),
                          _points.begin(), _keys.begin())),
                      thrust::make_zip_iterator(thrust::make_tuple(
                          countingEnd, _sortedIndices.end(), points.end(),
                          _points.end(), _keys.end())),
-                     initIndexPointAndKeysFunc);
+                     InitializeIndexPointAndKeys(_gridSpacing, _resolution));
 
     // Sort indices/points/key based on hash key
     thrust::sort_by_key(_keys.begin(), _keys.end(),
@@ -149,10 +147,9 @@ void CudaPointHashGridSearcher3::build(const CudaArrayView1<float4>& points) {
     _startIndexTable[_keys[0]] = 0;
     _endIndexTable[_keys[numberOfPoints - 1]] = numberOfPoints;
 
-    BuildTables buildTablesFunc(_keys.data(), _startIndexTable.data(),
-                                _endIndexTable.data());
-
-    thrust::for_each(countingBegin + 1, countingEnd, buildTablesFunc);
+    thrust::for_each(countingBegin + 1, countingEnd,
+                     BuildTables(_keys.data(), _startIndexTable.data(),
+                                 _endIndexTable.data()));
 }
 
 CudaArrayView1<size_t> CudaPointHashGridSearcher3::keys() const {
