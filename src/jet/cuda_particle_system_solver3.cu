@@ -7,13 +7,12 @@
 #include <pch.h>
 
 #include <jet/cuda_particle_system_solver3.h>
+#include <jet/cuda_utils.h>
 #include <jet/timer.h>
 
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
 #include <thrust/tuple.h>
-
-#include <helper_math.h>
 
 #include <algorithm>
 

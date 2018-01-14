@@ -13,56 +13,23 @@ using namespace experimental;
 
 namespace {
 
-inline __device__ int3 getBucketIndex(const float4& position,
-                                      float gridSpacing) {
-    int3 bucketIndex;
-    bucketIndex.x = (int)(floor(position.x / gridSpacing));
-    bucketIndex.y = (int)(floor(position.y / gridSpacing));
-    bucketIndex.z = (int)(floor(position.z / gridSpacing));
-    return bucketIndex;
-}
-
-inline __device__ size_t getHashKeyFromBucketIndex(const int3& bucketIndex,
-                                                   const uint3& resolution) {
-    int3 wrappedIndex = bucketIndex;
-    wrappedIndex.x = bucketIndex.x % resolution.x;
-    wrappedIndex.y = bucketIndex.y % resolution.y;
-    wrappedIndex.z = bucketIndex.z % resolution.z;
-    if (wrappedIndex.x < 0) {
-        wrappedIndex.x += resolution.x;
-    }
-    if (wrappedIndex.y < 0) {
-        wrappedIndex.y += resolution.y;
-    }
-    if (wrappedIndex.z < 0) {
-        wrappedIndex.z += resolution.z;
-    }
-    return (size_t)((wrappedIndex.z * resolution.y + wrappedIndex.y) *
-                        resolution.x +
-                    wrappedIndex.x);
-}
-
-inline __device__ size_t getHashKeyFromPosition(const float4& position,
-                                                const uint3& resolution,
-                                                float gridSpacing) {
-    int3 bucketIndex = getBucketIndex(position, gridSpacing);
-    return getHashKeyFromBucketIndex(bucketIndex, resolution);
-}
-
 struct InitializeTables {
     template <typename Tuple>
-    __device__ void operator()(Tuple t) {
+    inline JET_CUDA_DEVICE void operator()(Tuple t) {
         thrust::get<0>(t) = kMaxSize;
         thrust::get<1>(t) = kMaxSize;
     }
 };
 
 struct InitializeIndexPointAndKeys {
-    float gridSpacing;
-    uint3 resolution;
+    CudaPointHashGridSearcher3::HashUtils hashUtils;
+
+    inline JET_CUDA_HOST_DEVICE InitializeIndexPointAndKeys(float gridSpacing,
+                                                            int3 resolution)
+        : hashUtils(gridSpacing, resolution) {}
 
     template <typename Tuple>
-    __device__ void operator()(Tuple t) {
+    inline JET_CUDA_DEVICE void operator()(Tuple t) {
         // 0: i [in]
         // 1: sortedIndices[out]
         // 2: points[in]
@@ -72,7 +39,7 @@ struct InitializeIndexPointAndKeys {
         thrust::get<1>(t) = i;
         float4 p = thrust::get<2>(t);
         thrust::get<3>(t) = p;
-        size_t key = getHashKeyFromPosition(p, resolution, gridSpacing);
+        size_t key = hashUtils.getHashKeyFromPosition(p);
         thrust::get<4>(t) = key;
     }
 };
@@ -82,8 +49,11 @@ struct BuildTables {
     size_t* startIndexTable;
     size_t* endIndexTable;
 
+    inline JET_CUDA_HOST_DEVICE BuildTables(size_t* k, size_t* sit, size_t* eit)
+        : keys(k), startIndexTable(sit), endIndexTable(eit) {}
+
     template <typename Index>
-    __device__ void operator()(Index i) {
+    inline JET_CUDA_DEVICE void operator()(Index i) {
         size_t k = keys[i];
         size_t kLeft = keys[i - 1];
         if (k > kLeft) {
@@ -105,9 +75,9 @@ CudaPointHashGridSearcher3::CudaPointHashGridSearcher3(size_t resolutionX,
                                                        size_t resolutionZ,
                                                        float gridSpacing)
     : _gridSpacing(gridSpacing) {
-    _resolution.x = std::max(static_cast<ssize_t>(resolutionX), kOneSSize);
-    _resolution.y = std::max(static_cast<ssize_t>(resolutionY), kOneSSize);
-    _resolution.z = std::max(static_cast<ssize_t>(resolutionZ), kOneSSize);
+    _resolution.x = std::max(static_cast<int>(resolutionX), 1);
+    _resolution.y = std::max(static_cast<int>(resolutionY), 1);
+    _resolution.z = std::max(static_cast<int>(resolutionZ), 1);
 
     _startIndexTable.resize(_resolution.x * _resolution.y * _resolution.z,
                             kMaxSize);
@@ -149,11 +119,8 @@ void CudaPointHashGridSearcher3::build(const CudaArrayView1<float4>& points) {
     // Initialize indices array and generate hash key for each point
     auto countingBegin = thrust::counting_iterator<size_t>(0);
     auto countingEnd = countingBegin + numberOfPoints;
-    InitializeIndexPointAndKeys initIndexPointAndKeysFunc;
-    initIndexPointAndKeysFunc.gridSpacing = _gridSpacing;
-    initIndexPointAndKeysFunc.resolution =
-        make_uint3((unsigned int)_resolution.x, (unsigned int)_resolution.y,
-                   (unsigned int)_resolution.z);
+    InitializeIndexPointAndKeys initIndexPointAndKeysFunc(_gridSpacing,
+                                                          _resolution);
     thrust::for_each(thrust::make_zip_iterator(thrust::make_tuple(
                          countingBegin, _sortedIndices.begin(), points.begin(),
                          _points.begin(), _keys.begin())),
@@ -182,34 +149,10 @@ void CudaPointHashGridSearcher3::build(const CudaArrayView1<float4>& points) {
     _startIndexTable[_keys[0]] = 0;
     _endIndexTable[_keys[numberOfPoints - 1]] = numberOfPoints;
 
-    BuildTables buildTablesFunc;
-    buildTablesFunc.keys = _keys.data();
-    buildTablesFunc.startIndexTable = _startIndexTable.data();
-    buildTablesFunc.endIndexTable = _endIndexTable.data();
+    BuildTables buildTablesFunc(_keys.data(), _startIndexTable.data(),
+                                _endIndexTable.data());
 
     thrust::for_each(countingBegin + 1, countingEnd, buildTablesFunc);
-
-#if 0
-    size_t sumNumberOfPointsPerBucket = 0;
-    size_t maxNumberOfPointsPerBucket = 0;
-    size_t numberOfNonEmptyBucket = 0;
-    for (size_t i = 0; i < _startIndexTable.size(); ++i) {
-        if (_startIndexTable[i] != kMaxSize) {
-            size_t numberOfPointsInBucket =
-                _endIndexTable[i] - _startIndexTable[i];
-            sumNumberOfPointsPerBucket += numberOfPointsInBucket;
-            maxNumberOfPointsPerBucket =
-                std::max(maxNumberOfPointsPerBucket, numberOfPointsInBucket);
-            ++numberOfNonEmptyBucket;
-        }
-    }
-
-    JET_INFO << "Average number of points per non-empty bucket: "
-             << static_cast<float>(sumNumberOfPointsPerBucket) /
-                    static_cast<float>(numberOfNonEmptyBucket);
-    JET_INFO << "Max number of points per bucket: "
-             << maxNumberOfPointsPerBucket;
-#endif
 }
 
 CudaArrayView1<size_t> CudaPointHashGridSearcher3::keys() const {
@@ -226,6 +169,12 @@ CudaArrayView1<size_t> CudaPointHashGridSearcher3::endIndexTable() const {
 
 CudaArrayView1<size_t> CudaPointHashGridSearcher3::sortedIndices() const {
     return _sortedIndices.view();
+}
+
+CudaPointHashGridSearcher3& CudaPointHashGridSearcher3::operator=(
+    const CudaPointHashGridSearcher3& other) {
+    set(other);
+    return (*this);
 }
 
 void CudaPointHashGridSearcher3::set(const CudaPointHashGridSearcher3& other) {

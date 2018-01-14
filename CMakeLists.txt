@@ -80,7 +80,6 @@ if (USE_CUDA)
     list(APPEND CUDA_NVCC_FLAGS -Wno-deprecated-gpu-targets)
     add_definitions(-DJET_USE_CUDA)
     include_directories(${CUDA_INCLUDE_DIRS})
-    include_directories($ENV{NVCUDASAMPLES_ROOT}/common/inc)
 
     if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
         set(DEFAULT_COMPILE_OPTIONS ${DEFAULT_COMPILE_OPTIONS}
